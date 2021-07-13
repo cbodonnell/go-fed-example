@@ -2,80 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/go-fed/activity/streams"
 	"github.com/go-fed/activity/streams/vocab"
 )
-
-func fetchIRI(iri *url.URL) (string, error) {
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", iri.String(), nil)
-	if err != nil {
-		return "", err
-	}
-	// fmt.Println("GET " + iri.String())
-	req.Header.Add("Accept", "application/activity+json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	return string(body), nil
-}
-
-func jsonToOrderedCollection(jsonString string) (vocab.ActivityStreamsOrderedCollection, error) {
-	var o map[string]interface{}
-	err := json.Unmarshal([]byte(jsonString), &o)
-	if err != nil {
-		return nil, err
-	}
-	var orderedCollection vocab.ActivityStreamsOrderedCollection
-	resolver, err := streams.NewJSONResolver(
-		func(c context.Context, o vocab.ActivityStreamsOrderedCollection) error {
-			orderedCollection = o
-			return nil
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	ctx := context.Background()
-	err = resolver.Resolve(ctx, o)
-	if err != nil {
-		return nil, err
-	}
-	return orderedCollection, err
-}
-
-func jsonToOrderedCollectionPage(jsonString string) (vocab.ActivityStreamsOrderedCollectionPage, error) {
-	var o map[string]interface{}
-	err := json.Unmarshal([]byte(jsonString), &o)
-	if err != nil {
-		return nil, err
-	}
-	var orderedCollectionPage vocab.ActivityStreamsOrderedCollectionPage
-	resolver, err := streams.NewJSONResolver(
-		func(c context.Context, o vocab.ActivityStreamsOrderedCollectionPage) error {
-			orderedCollectionPage = o
-			return nil
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	ctx := context.Background()
-	err = resolver.Resolve(ctx, o)
-	if err != nil {
-		return nil, err
-	}
-	return orderedCollectionPage, err
-}
 
 func main() {
 
@@ -264,73 +197,54 @@ func main() {
 		"type": "Person",
 		"url": "https://mastodon.social/@Gargron"
 	  }`
-	// jsonstr := `{
-	// 	"@context": "https://www.w3.org/ns/activitystreams",
-	// 	"id":       "https://go-fed.org/foo",
-	// 	"name":     "Foo Bar",
-	// 	"inbox":    "https://go-fed.org/foo/inbox",
-	// 	"outbox":   "https://go-fed.org/foo/outbox",
-	// 	"type":     "Person",
-	// 	"url":      "https://go-fed.org/foo"
-	// }`
 
-	var m map[string]interface{}
-	_ = json.Unmarshal([]byte(jsonstr), &m)
-
-	// Next, we prepare a streams.JSONResolver, providing one or more callbacks.
+	// var person vocab.ActivityStreamsPerson
 	var person vocab.ActivityStreamsPerson
-	// var ib vocab.ActivityStreamsObject
-	resolver, _ := streams.NewJSONResolver(
-		func(c context.Context, p vocab.ActivityStreamsPerson) error {
-			// Store the person in the enclosing scope, for later.
-			person = p
-			return nil
-		},
-		func(c context.Context, note vocab.ActivityStreamsNote) error {
-			// We can treat the type differently.
-			fmt.Println(note)
-			return nil
-		},
-	)
-	// It will call back a function we provide if it is of a matching type,
-	// or returns streams.ErrNoCallbackMatch when we didn't give it a matcher for
-	// the type, or streams.ErrUnhandledType if it is a type unknown to Go-Fed.
-	ctx := context.Background()
-	_ = resolver.Resolve(ctx, m)
-
-	// Serialize to a JSON payload
-	// var jsonmap map[string]interface{}
-	// jsonmap, _ = streams.Serialize(person) // WARNING: Do not call the Serialize() method on person
-	// b, _ := json.Marshal(jsonmap)
-	// fmt.Println(string(b))
-
+	err := parseSpecific([]byte(jsonstr), func(c context.Context, o vocab.ActivityStreamsPerson) error {
+		person = o
+		return nil
+	})
+	if err != nil {
+		fmt.Println(fmt.Sprintf("Error parsing result: %s", err.Error()))
+	}
 	outbox := person.GetActivityStreamsOutbox()
-	// fmt.Println(outbox.GetIRI())
 	if outbox.IsActivityStreamsOrderedCollection() {
 		fmt.Println("IsActivityStreamsOrderedCollection")
 	} else if outbox.IsActivityStreamsOrderedCollectionPage() {
 		fmt.Println("IsActivityStreamsOrderedCollectionPage")
 	} else if outbox.IsIRI() {
 		// fmt.Println("IsIRI")
+		// TODO: Refactor these into parsing methods for each?
 		result, err := fetchIRI(outbox.GetIRI())
 		if err != nil {
-			fmt.Println("Error fetching IRI: " + err.Error())
+			fmt.Println(fmt.Sprintf("Error fetching IRI: %s", err.Error()))
 		}
-		oc, err := jsonToOrderedCollection(result)
+		var oc vocab.ActivityStreamsOrderedCollection
+		err = parseSpecific(result, func(c context.Context, o vocab.ActivityStreamsOrderedCollection) error {
+			oc = o
+			return nil
+		})
 		if err != nil {
-			fmt.Println("Error parsing result: " + err.Error())
+			fmt.Println(fmt.Sprintf("Error parsing result: %s", err.Error()))
 		}
 		first := oc.GetActivityStreamsFirst()
 		result, err = fetchIRI(first.GetIRI())
 		if err != nil {
-			fmt.Println("Error fetching IRI: " + err.Error())
+			fmt.Println(fmt.Sprintf("Error fetching IRI: %s", err.Error()))
 		}
-		fmt.Println(result)
-		page, err := jsonToOrderedCollectionPage(result)
+		var page vocab.ActivityStreamsOrderedCollectionPage
+		err = parseSpecific(result, func(c context.Context, o vocab.ActivityStreamsOrderedCollectionPage) error {
+			page = o
+			return nil
+		})
 		if err != nil {
-			fmt.Println("Error parsing result: " + err.Error())
+			fmt.Println(fmt.Sprintf("Error parsing result: %s", err.Error()))
 		}
-		page.GetActivityStreamsOrderedItems()
+		response, err := serialize(page)
+		if err != nil {
+			fmt.Println(fmt.Sprintf("Error serializing response: %s", err.Error()))
+		}
+		fmt.Println(string(response))
 	} else {
 		fmt.Println("IsNeither")
 	}
