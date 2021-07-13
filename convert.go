@@ -36,9 +36,7 @@ func parseGeneric(b []byte) (vocab.Type, error) {
 }
 
 func resolve(t vocab.Type, callback interface{}) error {
-	typeResolver, err := streams.NewTypeResolver(
-		callback,
-	)
+	typeResolver, err := streams.NewTypeResolver(callback)
 	if err != nil {
 		return err
 	}
